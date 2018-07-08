@@ -12,7 +12,7 @@ BUS_NUM			= 0x01			# I2C Bus
 IMU_ADDR 		= 0x68			# Device ID
 PWR_MGMT_1 		= 0x6B			# Power mgmt 1
 CAL_MAX_SMPLS	= 0x400			# Number of samples for calibration
-CAL_SMPL_RATE	= 0.010			# Sampling rate for calibration
+CAL_SMPL_RATE	= 0.001			# Sampling rate for calibration
 
 ACCEL_XOUT_H	= 0x3B			# ACCEL X H
 ACCEL_XOUT_L	= 0x3C			# ACCEL X L
@@ -32,20 +32,31 @@ GYRO_ZOUT_H		= 0x47			# GYRO Z H
 GYRO_ZOUT_L		= 0x48			# GYRO Z L
 
 GYRO_CONFIG		= 0x1B			# Gyro config
-ACCE_CONFIG		= 0x1C			# Accelero config
+ACCEL_CONFIG	= 0x1C			# Accelero config
 
 GYRO_FS_250		= 0b00000000	# Full scale range +/- 250 deg/s
 GYRO_FS_500		= 0b00001000	# Full scale range +/- 500 deg/s
 GYRO_FS_1K		= 0b00010000	# Full scale range +/- 1000 deg/s
 GYRO_FS_2K		= 0b00011000	# Full scale range +/- 2000 deg/s
 
-ACCE_FS2G		= 0b00000000	# Full scale range +/- 2g
-ACCE_FS4G		= 0b00001000	# Full scale range +/- 4g
-ACCE_FS8G		= 0b00010000	# Full scale range +/- 8g
-ACCE_FS16G		= 0b00011000	# Full scale range +/- 16g
+ACCEL_FS2G		= 0b00000000	# Full scale range +/- 2g
+ACCEL_FS4G		= 0b00001000	# Full scale range +/- 4g
+ACCEL_FS8G		= 0b00010000	# Full scale range +/- 8g
+ACCEL_FS16G		= 0b00011000	# Full scale range +/- 16g
+
+LSB_PER_G		= {				# Sensitivity LSB/g
+	ACCEL_FS2G: 16384.0,
+	ACCEL_FS4G:  8192.0,
+	ACCEL_FS8G:  4096.0,
+	ACCEL_FS16G: 2048.0
+}
 
 # get access to the I2C bus
 I2C_Bus = smbus.SMBus(BUS_NUM)
+
+def getAcceleroInG(value, lsbpg):
+	g = value / lsbpg
+	return g;
 
 def wakeupDevice():
 	print 'Waking up MPU 6050 @{0:#02x}'.format(IMU_ADDR)
@@ -59,6 +70,12 @@ def readWord(bus, addr, reg_H, reg_L):
 def short2Signed(number):
 	value = struct.unpack('h', struct.pack('H', number))[0]
 	return value;
+	
+def config(accel_fs, gyro_fs):
+	print 'Configuring: ACCEL={0:08b} GYRO={1:08b}'.format(accel_fs, gyro_fs)
+	I2C_Bus.write_byte_data(IMU_ADDR, ACCEL_CONFIG, accel_fs)
+	I2C_Bus.write_byte_data(IMU_ADDR, GYRO_CONFIG, gyro_fs)
+	return;
 	
 def getAcceleroMeasurements():
 	x = readWord(I2C_Bus, IMU_ADDR, ACCEL_XOUT_H, ACCEL_XOUT_H + 1)
@@ -110,9 +127,9 @@ def calibrate():
 	offsetX, offsetY, offsetZ = (-medX, -medY, -medZ)
 	
 	print 'Calibrated results: '
-	print 'Mean:   {0:.3f}, {1:.3f}, {1:.3f}'.format(meanX, meanY, meanZ)
-	print 'Median: {0:.3f}, {1:.3f}, {1:.3f}'.format(medX, medY, medZ)
-	print 'Stdev:  {0:.3f}, {1:.3f}, {1:.3f}'.format(stdX, stdY, stdZ)
+	print 'Mean:   {0:.3f}, {1:.3f}, {2:.3f}'.format(meanX, meanY, meanZ)
+	print 'Median: {0:.3f}, {1:.3f}, {2:.3f}'.format(medX, medY, medZ)
+	print 'Stdev:  {0:.3f}, {1:.3f}, {2:.3f}'.format(stdX, stdY, stdZ)
 	print 'Offsets: {0}'.format((offsetX, offsetY, offsetZ))
 		
 	return (offsetX, offsetY, offsetZ);
@@ -121,28 +138,39 @@ def calibrate():
 
 print 'Working with MPU 6050 (GY-521 Module)'
 
+# wake the device
 wakeupDevice()
 time.sleep(.10)
 
+# configure it
+gyro_fs = GYRO_FS_250
+accel_fs = ACCEL_FS2G
+config(accel_fs, gyro_fs)
+time.sleep(.10)
+
+# calibrate
 ox, oy, oz = calibrate()
 time.sleep(5)
 
-print 'Reading data..'
+# LSB/g
+lsbpg = LSB_PER_G[accel_fs]
+
 # let's play
+print 'Reading data..'
 while True:
 	try:
 		print '=== === === ==='
 		x, y, z = getAcceleroMeasurements()
-		x = x + ox
-		y = y + oy
-		z = z + oz
+		x = getAcceleroInG(x + ox, lsbpg)
+		y = getAcceleroInG(y + oy, lsbpg)
+		z = getAcceleroInG(z + oz, lsbpg)
 		
 		t = getTemperature()
 		
 		print 'ACCEL({0:.3f}, {1:.3f}, {2:.3f})'.format(x, y, z)
 		print 'TEMP: {0:.2f} deg C'.format(t)
 		
-		time.sleep(1)
+		time.sleep(0.500)
 	except:
 		print 'Exiting: ', sys.exc_info()[:2]
 		break
